@@ -1,20 +1,14 @@
-require('dotenv').config();
 const { Telegraf, Markup, session } = require('telegraf');
 const LocalSession = require('telegraf-session-local');
 const axios = require('axios');
 
-// --- Configuration ---
+// API Keys
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
-if (!GROQ_API_KEY || !TELEGRAM_BOT_TOKEN) {
-    console.error('❌ API Keys missing');
-}
-
-// Initialize Bot
 const bot = new Telegraf(TELEGRAM_BOT_TOKEN);
 
-// Vercel read-only bo'lgani uchun sessiyani /tmp ga saqlaymiz
+// Vercel uchun sessiyani /tmp/ papkasiga yo'naltiramiz
 const localSession = new LocalSession({ database: '/tmp/sessions.json' });
 bot.use(localSession.middleware());
 
@@ -51,7 +45,7 @@ async function handleGroqChat(ctx, prompt, imageBase64 = null) {
         ctx.session.history.push({ role: "assistant", content: text });
         if (ctx.session.history.length > 10) ctx.session.history = ctx.session.history.slice(-6);
 
-        // Split long messages
+        // Split text
         const limit = 3800;
         let current = text;
         while (current.length > 0) {
@@ -70,13 +64,9 @@ async function handleGroqChat(ctx, prompt, imageBase64 = null) {
     }
 }
 
-// Menus
-const mainBtn = [['📝 Yangi suhbat', '🧠 AI Rejimi'], ['📊 Statistika', '⚙️ Sozlamalar']];
-const getKeyboard = () => Markup.keyboard(mainBtn).resize();
-
 // Bot Logic
-bot.start((ctx) => ctx.reply('🚀 Antigravity Pro AI Botga xush kelibsiz!', getKeyboard()));
-bot.hears(['📝 Yangi suhbat', '📝 New Chat'], (ctx) => {
+bot.start((ctx) => ctx.reply('🚀 Antigravity Pro AI Bot Onlayn!', Markup.keyboard([['📝 Yangi suhbat']]).resize()));
+bot.hears('📝 Yangi suhbat', (ctx) => {
     ctx.session.history = [];
     ctx.reply('✅ Suhbat tarixingiz tozalandi.');
 });
@@ -89,25 +79,20 @@ bot.on('text', async (ctx) => {
 bot.on('photo', async (ctx) => {
     try {
         const photo = ctx.message.photo[ctx.message.photo.length - 1];
-        const fileLink = await bot.telegram.getFileLink(photo.file_id);
-        const res = await axios.get(fileLink.href, { responseType: 'arraybuffer' });
+        const link = await bot.telegram.getFileLink(photo.file_id);
+        const res = await axios.get(link.href, { responseType: 'arraybuffer' });
         const base64 = Buffer.from(res.data).toString('base64');
         await handleGroqChat(ctx, ctx.message.caption || "Rasm tahlili", base64);
     } catch (e) {
-        ctx.reply('❌ Rasmni yuklashda xatolik.');
+        ctx.reply('❌ Xatolik.');
     }
 });
 
-// --- Vercel Export (Webhook) ---
+// Vercel Webhook eksporti
 module.exports = async (req, res) => {
-    try {
-        if (req.method === 'POST') {
-            await bot.handleUpdate(req.body, res);
-        } else {
-            res.status(200).send('Antigravity Bot is active on Vercel!');
-        }
-    } catch (e) {
-        console.error('Webhook Error:', e);
-        res.status(500).send('Error');
+    if (req.method === 'POST') {
+        await bot.handleUpdate(req.body, res);
+    } else {
+        res.status(200).send('Bot is healthy!');
     }
 };
