@@ -1,5 +1,4 @@
-const { Telegraf, Markup, session } = require('telegraf');
-const LocalSession = require('telegraf-session-local');
+const { Telegraf, Markup } = require('telegraf');
 const axios = require('axios');
 
 // API Keys
@@ -8,28 +7,24 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
 const bot = new Telegraf(TELEGRAM_BOT_TOKEN);
 
-// Vercel uchun sessiyani /tmp/ papkasiga yo'naltiramiz
-const localSession = new LocalSession({ database: '/tmp/sessions.json' });
-bot.use(localSession.middleware());
-
 // --- AI Handler ---
 async function handleGroqChat(ctx, prompt, imageBase64 = null) {
     try {
-        if (!ctx.session.history) ctx.session.history = [];
+        await ctx.sendChatAction('typing');
+
+        // Vercel serverless bo'lgani uchun tarixni vaqtinchalik xotirada ushlab turamiz
         const messages = [
             { role: "system", content: "Siz 'Antigravity Pro Code Bot' assistantisiz. O'zbek tilida javob bering." },
-            ...ctx.session.history
+            { role: "user", content: [] }
         ];
 
-        const currentUserMessage = { role: "user", content: [] };
-        if (prompt) currentUserMessage.content.push({ type: "text", text: prompt });
+        if (prompt) messages[1].content.push({ type: "text", text: prompt });
         if (imageBase64) {
-            currentUserMessage.content.push({
+            messages[1].content.push({
                 type: "image_url",
                 image_url: { url: `data:image/jpeg;base64,${imageBase64}` }
             });
         }
-        messages.push(currentUserMessage);
 
         const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
             model: imageBase64 ? "meta-llama/llama-4-scout-17b-16e-instruct" : "llama-3.3-70b-versatile",
@@ -41,11 +36,8 @@ async function handleGroqChat(ctx, prompt, imageBase64 = null) {
         });
 
         const text = response.data.choices[0].message.content;
-        ctx.session.history.push({ role: "user", content: prompt || "Rasm yuborildi" });
-        ctx.session.history.push({ role: "assistant", content: text });
-        if (ctx.session.history.length > 10) ctx.session.history = ctx.session.history.slice(-6);
 
-        // Split text
+        // Xabarni bo'laklab yuborish
         const limit = 3800;
         let current = text;
         while (current.length > 0) {
@@ -65,11 +57,7 @@ async function handleGroqChat(ctx, prompt, imageBase64 = null) {
 }
 
 // Bot Logic
-bot.start((ctx) => ctx.reply('🚀 Antigravity Pro AI Bot Onlayn!', Markup.keyboard([['📝 Yangi suhbat']]).resize()));
-bot.hears('📝 Yangi suhbat', (ctx) => {
-    ctx.session.history = [];
-    ctx.reply('✅ Suhbat tarixingiz tozalandi.');
-});
+bot.start((ctx) => ctx.reply('🚀 Antigravity Pro AI Bot Onlayn (Vercel)!', Markup.keyboard([['📝 Yangi suhbat']]).resize()));
 
 bot.on('text', async (ctx) => {
     if (ctx.message.text.startsWith('/')) return;
@@ -84,15 +72,9 @@ bot.on('photo', async (ctx) => {
         const base64 = Buffer.from(res.data).toString('base64');
         await handleGroqChat(ctx, ctx.message.caption || "Rasm tahlili", base64);
     } catch (e) {
-        ctx.reply('❌ Xatolik.');
+        ctx.reply('❌ Xatolik yuz berdi.');
     }
 });
 
-// Vercel Webhook eksporti
-module.exports = async (req, res) => {
-    if (req.method === 'POST') {
-        await bot.handleUpdate(req.body, res);
-    } else {
-        res.status(200).send('Bot is healthy!');
-    }
-};
+// Vercel uchun eng to'g'ri Webhook callback
+module.exports = bot.webhookCallback('/api/index');
