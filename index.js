@@ -265,17 +265,32 @@ bot.on('document', async (ctx) => {
     }
 });
 
-// --- Startup ---
+// --- Startup for Vercel (Webhook Mode) ---
 
-bot.launch().then(() => {
-    console.clear();
-    console.log(chalk.cyan.bold('========================================'));
-    console.log(chalk.white.bold('   🚀 ANTIGRAVITY PRO BOT ONLAYN!   '));
-    console.log(chalk.cyan.bold('========================================'));
-    logger(LOG_LEVELS.INFO, `Bot username: @${bot.botInfo?.username || 'aniqlanmadi'}`);
-    logger(LOG_LEVELS.SUCCESS, 'Bazalar yuklandi va ulanish o\'rnatildi.');
-    console.log(chalk.gray('Kutish rejimi faollashdi...\n'));
-});
+if (process.env.NODE_ENV === 'production') {
+    // Vercel uchun export
+    module.exports = async (req, res) => {
+        try {
+            if (req.method === 'POST') {
+                await bot.handleUpdate(req.body, res);
+            } else {
+                res.status(200).send('Antigravity Bot is active!');
+            }
+        } catch (e) {
+            console.error('Webhook Error:', e);
+            res.status(500).send('Error');
+        }
+    };
+} else {
+    // Localda tekshirish uchun (npm start)
+    bot.launch().then(() => {
+        console.clear();
+        console.log(chalk.cyan.bold('========================================'));
+        console.log(chalk.white.bold('   🚀 ANTIGRAVITY PRO BOT ONLAYN!   '));
+        console.log(chalk.cyan.bold('========================================'));
+        logger(LOG_LEVELS.SUCCESS, 'Bazalar yuklandi va ulanish o\'rnatildi.');
+    });
+}
 
 // Graceful stop
 process.once('SIGINT', () => bot.stop('SIGINT'));
