@@ -1,83 +1,74 @@
 const { Telegraf } = require('telegraf');
 const axios = require('axios');
 
-// API Kalitlari (Vercel Settings'da bo'lishi shart)
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 
-const bot = new Telegraf(TELEGRAM_BOT_TOKEN);
+// AI Handler
+async function getAIResponse(prompt, imageBase64 = null) {
+    const messages = [
+        { role: "system", content: "Siz 'Antigravity Pro' assistantisiz. O'zbek tilida javob bering." },
+        { role: "user", content: prompt }
+    ];
 
-// AI Handler funksiyasi
-async function handleGroqChat(ctx, prompt, imageBase64 = null) {
-    try {
-        await ctx.sendChatAction('typing');
+    const model = imageBase64 ? "meta-llama/llama-4-scout-17b-16e-instruct" : "llama-3.3-70b-versatile";
 
-        const messages = [
-            { role: "system", content: "Siz 'Antigravity Pro Code Bot' assistantisiz. O'zbek tilida javob bering." }
-        ];
+    const payload = {
+        model: model,
+        messages: [{
+            role: "user",
+            content: imageBase64 ? [
+                { type: "text", text: prompt },
+                { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageBase64}` } }
+            ] : prompt
+        }]
+    };
 
-        const userMsg = { role: "user", content: [] };
-        if (prompt) userMsg.content.push({ type: "text", text: prompt });
-        if (imageBase64) {
-            userMsg.content.push({
-                type: "image_url",
-                image_url: { url: `data:image/jpeg;base64,${imageBase64}` }
-            });
-        }
-        messages.push(userMsg);
+    const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', payload, {
+        headers: { 'Authorization': `Bearer ${process.env.GROQ_API_KEY}`, 'Content-Type': 'application/json' }
+    });
 
-        const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-            model: imageBase64 ? "meta-llama/llama-4-scout-17b-16e-instruct" : "llama-3.3-70b-versatile",
-            messages: messages,
-            max_tokens: 2000,
-            temperature: 0.7
-        }, {
-            headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' }
-        });
-
-        const text = response.data.choices[0].message.content;
-
-        // Telegram 4096 belgi chegarasini hisobga olgan holda yuborish
-        const chunks = text.match(/[\s\S]{1,4000}/g) || [];
-        for (const chunk of chunks) {
-            await ctx.reply(chunk, { parse_mode: 'Markdown' });
-        }
-    } catch (error) {
-        console.error('Groq Error:', error.response?.data || error.message);
-        await ctx.reply('❌ Xatolik yuz berdi. Iltimos, birozdan so\'ng urinib ko\'ring.');
-    }
+    return response.data.choices[0].message.content;
 }
 
-// Bot Buyruqlari
-bot.start((ctx) => ctx.reply('🚀 Antigravity Pro Code Bot Vercel-da ishlamoqda! Menga matn yoki rasm yuboring.'));
+bot.start((ctx) => ctx.reply('🚀 Antigravity Bot yaqin! Menga biror narsa yozing.'));
 
 bot.on('text', async (ctx) => {
-    if (ctx.message.text.startsWith('/')) return;
-    await handleGroqChat(ctx, ctx.message.text);
+    try {
+        await ctx.sendChatAction('typing');
+        const answer = await getAIResponse(ctx.message.text);
+        await ctx.reply(answer, { parse_mode: 'Markdown' });
+    } catch (e) {
+        console.error('Text AI Error:', e.response?.data || e.message);
+        await ctx.reply('❌ Xatolik yuz berdi. Iltimos, keyinroq urinib ko\'ring.');
+    }
 });
 
 bot.on('photo', async (ctx) => {
     try {
+        await ctx.sendChatAction('typing');
         const photo = ctx.message.photo[ctx.message.photo.length - 1];
         const link = await bot.telegram.getFileLink(photo.file_id);
         const res = await axios.get(link.href, { responseType: 'arraybuffer' });
         const base64 = Buffer.from(res.data).toString('base64');
-        await handleGroqChat(ctx, ctx.message.caption || "Rasm tahlili", base64);
+        const answer = await getAIResponse(ctx.message.caption || "Ushbu rasmni tahlil qil.", base64);
+        await ctx.reply(answer, { parse_mode: 'Markdown' });
     } catch (e) {
-        await ctx.reply('❌ Rasmni qayta ishlashda xatolik yuz berdi.');
+        console.error('Photo AI Error:', e.response?.data || e.message);
+        await ctx.reply('❌ Rasmni tahlil qilishda xato.');
     }
 });
 
-// Vercel talab qilgan Handler
+// Vercel talab qilgan Webhook eksporti
 module.exports = async (req, res) => {
-    try {
-        if (req.method === 'POST') {
-            await bot.handleUpdate(req.body, res);
-        } else {
-            res.status(200).send('Bot is active and healthy!');
+    if (req.method === 'POST') {
+        try {
+            await bot.handleUpdate(req.body);
+            res.status(200).send('OK');
+        } catch (err) {
+            console.error('HandleUpdate Error:', err);
+            res.status(500).send('Error');
         }
-    } catch (error) {
-        console.error('Vercel Webhook Error:', error);
-        res.status(500).send('Internal Server Error');
+    } else {
+        res.status(200).send('Antigravity Bot is active!');
     }
 };
