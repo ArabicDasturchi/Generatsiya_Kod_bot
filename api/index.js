@@ -1,30 +1,30 @@
-const { Telegraf, Markup } = require('telegraf');
+const { Telegraf } = require('telegraf');
 const axios = require('axios');
 
-// API Keys
+// API Kalitlari (Vercel Settings'da bo'lishi shart)
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
 const bot = new Telegraf(TELEGRAM_BOT_TOKEN);
 
-// --- AI Handler ---
+// AI Handler funksiyasi
 async function handleGroqChat(ctx, prompt, imageBase64 = null) {
     try {
         await ctx.sendChatAction('typing');
 
-        // Vercel serverless bo'lgani uchun tarixni vaqtinchalik xotirada ushlab turamiz
         const messages = [
-            { role: "system", content: "Siz 'Antigravity Pro Code Bot' assistantisiz. O'zbek tilida javob bering." },
-            { role: "user", content: [] }
+            { role: "system", content: "Siz 'Antigravity Pro Code Bot' assistantisiz. O'zbek tilida javob bering." }
         ];
 
-        if (prompt) messages[1].content.push({ type: "text", text: prompt });
+        const userMsg = { role: "user", content: [] };
+        if (prompt) userMsg.content.push({ type: "text", text: prompt });
         if (imageBase64) {
-            messages[1].content.push({
+            userMsg.content.push({
                 type: "image_url",
                 image_url: { url: `data:image/jpeg;base64,${imageBase64}` }
             });
         }
+        messages.push(userMsg);
 
         const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
             model: imageBase64 ? "meta-llama/llama-4-scout-17b-16e-instruct" : "llama-3.3-70b-versatile",
@@ -37,27 +37,19 @@ async function handleGroqChat(ctx, prompt, imageBase64 = null) {
 
         const text = response.data.choices[0].message.content;
 
-        // Xabarni bo'laklab yuborish
-        const limit = 3800;
-        let current = text;
-        while (current.length > 0) {
-            if (current.length <= limit) {
-                await ctx.reply(current, { parse_mode: 'Markdown' });
-                break;
-            }
-            let pos = current.lastIndexOf('\n', limit);
-            if (pos === -1) pos = limit;
-            await ctx.reply(current.substring(0, pos), { parse_mode: 'Markdown' });
-            current = current.substring(pos).trim();
+        // Telegram 4096 belgi chegarasini hisobga olgan holda yuborish
+        const chunks = text.match(/[\s\S]{1,4000}/g) || [];
+        for (const chunk of chunks) {
+            await ctx.reply(chunk, { parse_mode: 'Markdown' });
         }
     } catch (error) {
-        console.error('Groq Error:', error.message);
-        ctx.reply('❌ Xatolik yuz berdi. Iltimos, keyinroq urinib ko\'ring.');
+        console.error('Groq Error:', error.response?.data || error.message);
+        await ctx.reply('❌ Xatolik yuz berdi. Iltimos, birozdan so\'ng urinib ko\'ring.');
     }
 }
 
-// Bot Logic
-bot.start((ctx) => ctx.reply('🚀 Antigravity Pro AI Bot Onlayn (Vercel)!', Markup.keyboard([['📝 Yangi suhbat']]).resize()));
+// Bot Buyruqlari
+bot.start((ctx) => ctx.reply('🚀 Antigravity Pro Code Bot Vercel-da ishlamoqda! Menga matn yoki rasm yuboring.'));
 
 bot.on('text', async (ctx) => {
     if (ctx.message.text.startsWith('/')) return;
@@ -72,9 +64,20 @@ bot.on('photo', async (ctx) => {
         const base64 = Buffer.from(res.data).toString('base64');
         await handleGroqChat(ctx, ctx.message.caption || "Rasm tahlili", base64);
     } catch (e) {
-        ctx.reply('❌ Xatolik yuz berdi.');
+        await ctx.reply('❌ Rasmni qayta ishlashda xatolik yuz berdi.');
     }
 });
 
-// Vercel uchun eng to'g'ri Webhook callback
-module.exports = bot.webhookCallback('/api/index');
+// Vercel talab qilgan Handler
+module.exports = async (req, res) => {
+    try {
+        if (req.method === 'POST') {
+            await bot.handleUpdate(req.body, res);
+        } else {
+            res.status(200).send('Bot is active and healthy!');
+        }
+    } catch (error) {
+        console.error('Vercel Webhook Error:', error);
+        res.status(500).send('Internal Server Error');
+    }
+};
