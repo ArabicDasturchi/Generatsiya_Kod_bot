@@ -3,7 +3,7 @@ const axios = require('axios');
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 
-// --- Vaqtinchalik sessiya (Vercel warm-up vaqtida ishlaydi) ---
+// --- Foydalanuvchi rejimi (Vercel-da qisqa muddat saqlanadi) ---
 let userModes = {};
 
 const modeInfo = {
@@ -29,12 +29,13 @@ const modeInfo = {
     }
 };
 
-const backButton = Markup.inlineKeyboard([[Markup.button.callback('⬅️ Orqaga Qaytish', 'main_menu')]]);
+const backBtn = Markup.inlineKeyboard([[Markup.button.callback('⬅️ Orqaga Qaytish', 'main_menu')]]);
 
 // --- Smart Message Chunking ---
 async function sendProfessionalMessage(ctx, text) {
-    const chunks = text.match(/[\s\S]{1,4000}/g) || [text];
+    const chunks = text.match(/[\s\S]{1,3900}/g) || [text];
     for (const chunk of chunks) {
+        // Har bir bo'lakni kutib yuboramiz
         await ctx.reply(chunk, { parse_mode: 'Markdown' }).catch(() => ctx.reply(chunk));
     }
 }
@@ -42,6 +43,7 @@ async function sendProfessionalMessage(ctx, text) {
 // --- AI Core Central ---
 async function fetchAIResponse(ctx, prompt, imageBase64 = null) {
     const userId = ctx.from.id;
+    // Agar foydalanuvchi rejimi aniq bo'lmasa, rasm bo'lsa 'design', aks holda 'chat'
     const mode = userModes[userId] || (imageBase64 ? 'design' : 'chat');
     const currentMode = modeInfo[mode];
 
@@ -57,7 +59,7 @@ async function fetchAIResponse(ctx, prompt, imageBase64 = null) {
             messages.push({
                 role: "user",
                 content: [
-                    { type: "text", text: prompt || "Ushbu rasmni tahlil qiling." },
+                    { type: "text", text: prompt || "Ushbu rasmni professional darajada tahlil qiling va kod yozing." },
                     { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageBase64}` } }
                 ]
             });
@@ -69,62 +71,71 @@ async function fetchAIResponse(ctx, prompt, imageBase64 = null) {
             model: model,
             messages: messages,
             max_tokens: 4000,
-            temperature: 0.2
+            temperature: 0.1
         }, {
-            headers: { 'Authorization': `Bearer ${process.env.GROQ_API_KEY}` },
+            headers: { 'Authorization': `Bearer ${process.env.GROQ_API_KEY}`, 'Content-Type': 'application/json' },
             timeout: 55000
         });
 
+        // 1. AI Javobini yuborish
         await sendProfessionalMessage(ctx, res.data.choices[0].message.content);
 
-        // --- Avtomatik ravishda rejim ma'lumotlarini qayta ko'rsatish ---
-        setTimeout(async () => {
-            await ctx.replyWithMarkdown(`${currentMode.title}\n\n${currentMode.text}`, backButton);
-        }, 500);
+        // 2. REJIM ESLATMASINI DARHOL YUBORISH (setTimeout-siz)
+        await ctx.replyWithMarkdown(`${currentMode.title}\n\n${currentMode.text}`, backBtn);
 
     } catch (e) {
-        ctx.reply(`❌ Xatolik: ${e.message}`);
+        console.error('Fetch Error:', e.message);
+        await ctx.reply(`❌ Xatolik yuz berdi. Iltimos, qaytadan urinib ko'ring.`);
+        await ctx.replyWithMarkdown(currentMode.title, backBtn);
     }
 }
 
 // --- Menus ---
-const mainMenu = () => Markup.inlineKeyboard([
+const mainMenuMarkup = () => Markup.inlineKeyboard([
     [Markup.button.callback('🖼 Rasm-to-Kod (Pro)', 'mode_design'), Markup.button.callback('💬 AI Chat (Ultra)', 'mode_chat')],
     [Markup.button.callback('💻 Dasturlash (Senior)', 'mode_code'), Markup.button.callback('🎨 Logo Tahlili', 'mode_logo')],
     [Markup.button.callback('📈 Statistika', 'stats')]
 ]);
 
-// --- Core Actions ---
-bot.start((ctx) => ctx.replyWithMarkdown('💎 *Antigravity Super AI Professional Markazi*\n\nXizmatlardan birini tanlang:', mainMenu()));
+// --- Actions ---
+bot.start((ctx) => ctx.replyWithMarkdown('💎 *Antigravity Super AI Professional Markazi*\n\nXizmatlardan birini tanlang:', mainMenuMarkup()));
 
-bot.action('main_menu', (ctx) => {
-    userModes[ctx.from.id] = 'chat'; // Reset mode
-    return ctx.editMessageText('💎 *Xizmatlardan birini tanlang:*', { parse_mode: 'Markdown', ...mainMenu() });
+bot.action('main_menu', async (ctx) => {
+    userModes[ctx.from.id] = 'chat';
+    await ctx.answerCbQuery();
+    return ctx.editMessageText('💎 *Xizmatlardan birini tanlang:*', { parse_mode: 'Markdown', ...mainMenuMarkup() });
 });
 
-// Rejimlarni o'rnatish
-bot.action('mode_design', (ctx) => { userModes[ctx.from.id] = 'design'; ctx.replyWithMarkdown(modeInfo.design.title + '\n\n' + modeInfo.design.text, backButton); });
-bot.action('mode_chat', (ctx) => { userModes[ctx.from.id] = 'chat'; ctx.replyWithMarkdown(modeInfo.chat.title + '\n\n' + modeInfo.chat.text, backButton); });
-bot.action('mode_code', (ctx) => { userModes[ctx.from.id] = 'code'; ctx.replyWithMarkdown(modeInfo.code.title + '\n\n' + modeInfo.code.text, backButton); });
-bot.action('mode_logo', (ctx) => { userModes[ctx.from.id] = 'logo'; ctx.replyWithMarkdown(modeInfo.logo.title + '\n\n' + modeInfo.logo.text, backButton); });
+bot.action('mode_design', async (ctx) => { userModes[ctx.from.id] = 'design'; await ctx.answerCbQuery(); ctx.replyWithMarkdown(modeInfo.design.title + '\n\n' + modeInfo.design.text, backBtn); });
+bot.action('mode_chat', async (ctx) => { userModes[ctx.from.id] = 'chat'; await ctx.answerCbQuery(); ctx.replyWithMarkdown(modeInfo.chat.title + '\n\n' + modeInfo.chat.text, backBtn); });
+bot.action('mode_code', async (ctx) => { userModes[ctx.from.id] = 'code'; await ctx.answerCbQuery(); ctx.replyWithMarkdown(modeInfo.code.title + '\n\n' + modeInfo.code.text, backBtn); });
+bot.action('mode_logo', async (ctx) => { userModes[ctx.from.id] = 'logo'; await ctx.answerCbQuery(); ctx.replyWithMarkdown(modeInfo.logo.title + '\n\n' + modeInfo.logo.text, backBtn); });
 
-bot.action('stats', (ctx) => ctx.replyWithMarkdown(`📈 *Global Bot Statistikasi:* \n\n✅ Holat: *Barqaror* \n🤖 AI Platforma: *Groq Ultra* \n🚀 Server: *Vercel Cloud*`, backButton));
+bot.action('stats', async (ctx) => {
+    await ctx.answerCbQuery();
+    ctx.replyWithMarkdown(`📈 *Bot Statistikasi:* \n\n✅ Holat: *Active* \n🤖 AI: *Groq Ultra* \n🚀 Server: *Vercel Edge*`, backBtn);
+});
 
+// --- Handlers ---
 bot.on('text', async (ctx) => {
     if (ctx.message.text.startsWith('/')) return;
     await fetchAIResponse(ctx, ctx.message.text);
 });
 
 bot.on('photo', async (ctx) => {
-    const photo = ctx.message.photo[ctx.message.photo.length - 1];
-    const link = await bot.telegram.getFileLink(photo.file_id);
-    const res = await axios.get(link.href, { responseType: 'arraybuffer' });
-    const base64 = Buffer.from(res.data).toString('base64');
-    await fetchAIResponse(ctx, ctx.message.caption, base64);
+    try {
+        const photo = ctx.message.photo[ctx.message.photo.length - 1];
+        const link = await bot.telegram.getFileLink(photo.file_id);
+        const res = await axios.get(link.href, { responseType: 'arraybuffer' });
+        const base64 = Buffer.from(res.data).toString('base64');
+        await fetchAIResponse(ctx, ctx.message.caption, base64);
+    } catch (e) {
+        ctx.reply('❌ Rasmni yuklashda xatolik.');
+    }
 });
 
 module.exports = async (req, res) => {
     if (req.method === 'POST') {
         try { await bot.handleUpdate(req.body); res.status(200).send('OK'); } catch (err) { res.status(200).send('OK'); }
-    } else { res.status(200).send('Antigravity Pro is READY!'); }
+    } else { res.status(200).send('Active'); }
 };
